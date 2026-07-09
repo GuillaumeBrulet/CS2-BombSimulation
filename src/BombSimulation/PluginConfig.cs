@@ -46,6 +46,19 @@ public class PluginConfig : BasePluginConfig
     [JsonPropertyName("PracBotCount")]
     public int PracBotCount { get; set; } = 12;
 
+    /// <summary>Nombre maximum de vagues d'explosion en mode auto.</summary>
+    [JsonPropertyName("AutoMaxWaves")]
+    public int AutoMaxWaves { get; set; } = 15;
+
+    /// <summary>Délai (s) entre le placement des bots et la détonation.</summary>
+    [JsonPropertyName("AutoSpreadSettleSeconds")]
+    public float AutoSpreadSettleSeconds { get; set; } = 2.0f;
+
+    /// <summary>Délai (s) après la fenêtre de capture avant la vague suivante
+    /// (laisse le temps aux bots de respawn).</summary>
+    [JsonPropertyName("AutoRespawnDelaySeconds")]
+    public float AutoRespawnDelaySeconds { get; set; } = 4.0f;
+
     /// <summary>Classe schema où lire les dégâts prédits par le jeu (aperçu natif du patch
     /// du 08/07/2026). Laisser le champ vide tant que le nom exact n'est pas identifié.</summary>
     [JsonPropertyName("PredictedDamageSchemaClass")]

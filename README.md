@@ -24,6 +24,8 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 | Commande | Effet |
 |---|---|
 | `!bombsim prac` | Config practice complète : sv_cheats, rounds sans fin, bots CT passifs avec respawn, argent illimité, C4 en main |
+| `!bombsim auto` | **Mode auto** : pose la bombe et le plugin fait tout — vagues d'explosions enchaînées (spread → boom → respawn → replant automatique de la bombe au même endroit) jusqu'à couvrir toute la zone, puis affiche la heatmap |
+| `!bombsim stop` | Arrête la campagne auto en cours |
 | `!bombsim c4` | Redonne un C4 (et passe côté T si besoin) |
 | `!noclip` | Active/désactive le vol libre |
 | `!bombsim record` | Arme l'enregistrement (bombe posée requise) : boost les HP des bots, capture les dégâts à l'explosion, sauvegarde et affiche la heatmap |
@@ -39,13 +41,14 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 
 ```
 !bombsim prac     // config practice + bots passifs + C4 en main, tout-en-un
-// pose la bombe sur le spot à étudier
-!bombsim record
-!bombsim spread
-!bombsim boom
-// la heatmap s'affiche ; !bombsim c4 pour replanter au même endroit et densifier
-!dmg              // puis balade-toi pour lire les valeurs exactes
+!bombsim auto     // active le mode automatique
+// pose la bombe sur le spot à étudier… et c'est tout :
+// le plugin enchaîne les vagues (spread → boom → respawn → replant auto)
+// du plus proche au plus loin, puis affiche la heatmap complète
+!dmg              // balade-toi pour lire les valeurs exactes
 ```
+
+Le mode manuel (`record` / `spread` / `boom` / `c4`) reste disponible pour des mesures ciblées.
 
 > 💡 Tant que la signature `Host_Say` du gamedata n'est pas corrigée (casse du patch
 > du 08/07/2026), les commandes chat `!`/`.` sont muettes : utiliser les équivalents
@@ -87,9 +90,9 @@ La config est générée au premier lancement dans `addons/counterstrikesharp/co
 - [x] Phase 1 — mesure empirique via bots + événements `player_hurt`
 - [x] Phase 2 — heatmap au sol (beams), HUD live `!dmg`, détonation rapide, répartition des bots
 - [x] Phase 3 — cache JSON par `(map, spot de plant)`
+- [x] Mode auto : campagne de vagues enchaînées avec replant automatique de la bombe
 - [ ] Identifier le champ schema de l'aperçu de dégâts (patch 08/07/2026) et activer la lecture prédictive
 - [ ] Échantillonnage automatique par bot sonde téléporté (si champ prédictif dispo)
-- [ ] Replant automatique de la bombe entre deux passes de mesure
 - [ ] Comparaison côte à côte de deux spots de plant
 
 > ⚠️ Ce plugin n'a pas encore été validé en jeu contre le nouveau système d'onde de choc : les noms d'événements/propriétés utilisés sont ceux connus de CounterStrikeSharp 1.0.370. Toute divergence constatée sur un serveur à jour est à remonter en issue.

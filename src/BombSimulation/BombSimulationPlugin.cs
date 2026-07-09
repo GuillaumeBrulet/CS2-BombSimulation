@@ -12,7 +12,7 @@ namespace BombSimulation;
 public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
 {
     public override string ModuleName => "CS2 Bomb Simulation";
-    public override string ModuleVersion => "0.1.0";
+    public override string ModuleVersion => "0.2.0";
     public override string ModuleAuthor => "GuillaumeBrulet";
 
     public override string ModuleDescription =>
@@ -27,6 +27,12 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
 
     private Vector? _plantPos;
     private HeatmapData? _heatmap;
+    private int _plantSite;
+
+    // Mode auto : campagne de vagues d'explosions enchaînées sans intervention.
+    private bool _autoMode;
+    private bool _campaignRunning;
+    private int _wavesLeft;
 
     private readonly HashSet<int> _hudSlots = new();
     private readonly Dictionary<int, string> _hudCache = new();
@@ -63,6 +69,8 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     [GameEventHandler]
     public HookResult OnBombPlanted(EventBombPlanted ev, GameEventInfo info)
     {
+        var site = ev.Site;
+
         // La planted_c4 n'existe pas encore au moment de l'événement.
         Server.NextFrame(() =>
         {
@@ -71,7 +79,14 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
             if (origin == null || _store == null) return;
 
             _plantPos = new Vector(origin.X, origin.Y, origin.Z);
+            _plantSite = site;
             _heatmap = _store.LoadOrCreate(Server.MapName, origin.X, origin.Y, origin.Z);
+
+            if (_autoMode && !_campaignRunning)
+            {
+                StartCampaign();
+                return;
+            }
 
             var count = _heatmap.Samples.Count;
             Server.PrintToChatAll(count > 0
@@ -80,6 +95,89 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
         });
 
         return HookResult.Continue;
+    }
+
+    // ------------------------------------------------------------ mode auto
+
+    private void StartCampaign()
+    {
+        if (_plantPos == null || _heatmap == null) return;
+
+        _campaignRunning = true;
+        _wavesLeft = Config.AutoMaxWaves;
+        Server.PrintToChatAll($"{Prefix} {ChatColors.Green}Campagne auto lancée{ChatColors.Default} : jusqu'à {Config.AutoMaxWaves} vagues d'explosion, du plus proche au plus loin. Ne touche à rien !");
+        RunWave();
+    }
+
+    private void RunWave()
+    {
+        if (!_campaignRunning || _plantPos == null || _heatmap == null) return;
+
+        _recorder?.Arm();
+        var moved = SpreadBots(_plantPos, _heatmap);
+
+        if (moved == 0)
+        {
+            FinishCampaign("toutes les cases à portée sont mesurées");
+            return;
+        }
+
+        var wave = Config.AutoMaxWaves - _wavesLeft + 1;
+        Server.PrintToChatAll($"{Prefix} Vague {wave} : {moved} bots placés, détonation…");
+        AddTimer(Config.AutoSpreadSettleSeconds, DetonateForCampaign);
+    }
+
+    private void DetonateForCampaign()
+    {
+        if (!_campaignRunning || _plantPos == null) return;
+
+        var c4 = Utilities.FindAllEntitiesByDesignerName<CPlantedC4>("planted_c4").FirstOrDefault();
+        if (c4 == null || !c4.IsValid)
+        {
+            // Plus de bombe (vagues suivantes) : on en replante une nous-mêmes.
+            c4 = SpawnPlantedC4(_plantPos, _plantSite);
+            if (c4 == null)
+            {
+                FinishCampaign("impossible de replanter la bombe automatiquement — replante à la main et relance");
+                return;
+            }
+        }
+
+        c4.C4Blow = Server.CurrentTime + 1f;
+        Utilities.SetStateChanged(c4, "CPlantedC4", "m_flC4Blow");
+    }
+
+    private CPlantedC4? SpawnPlantedC4(Vector pos, int site)
+    {
+        var c4 = Utilities.CreateEntityByName<CPlantedC4>("planted_c4");
+        if (c4 == null || !c4.IsValid) return null;
+
+        c4.Teleport(pos, new QAngle(), new Vector());
+        c4.DispatchSpawn();
+
+        c4.BombTicking = true;
+        c4.TimerLength = 2f;
+        c4.C4Blow = Server.CurrentTime + 2f;
+        c4.BombSite = site;
+        Utilities.SetStateChanged(c4, "CPlantedC4", "m_bBombTicking");
+        Utilities.SetStateChanged(c4, "CPlantedC4", "m_flC4Blow");
+        Utilities.SetStateChanged(c4, "CPlantedC4", "m_nBombSite");
+
+        return c4;
+    }
+
+    private void FinishCampaign(string reason)
+    {
+        _campaignRunning = false;
+
+        if (_heatmap != null)
+        {
+            _store?.Save(_heatmap);
+            _renderer.Render(_heatmap, Config, Config.RecorderBotsArmored);
+        }
+
+        _recorder?.Disarm();
+        Server.PrintToChatAll($"{Prefix} {ChatColors.Green}Campagne terminée{ChatColors.Default} ({reason}) — {_heatmap?.Samples.Count ?? 0} mesures au total. {ChatColors.Yellow}!dmg{ChatColors.Default} pour explorer.");
     }
 
     [GameEventHandler]
@@ -121,6 +219,27 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
         _store.Save(_heatmap);
         _renderer.Render(_heatmap, Config, Config.RecorderBotsArmored);
 
+        if (_campaignRunning)
+        {
+            _wavesLeft--;
+
+            if (added == 0)
+            {
+                FinishCampaign("aucune mesure capturée sur la dernière vague — la détonation automatique ne fonctionne peut-être pas sur cette map");
+                return;
+            }
+
+            if (_wavesLeft <= 0)
+            {
+                FinishCampaign("nombre maximum de vagues atteint");
+                return;
+            }
+
+            Server.PrintToChatAll($"{Prefix} +{added} mesures ({_heatmap.Samples.Count} au total). Vague suivante dans {Config.AutoRespawnDelaySeconds:0}s…");
+            AddTimer(Config.AutoRespawnDelaySeconds, RunWave);
+            return;
+        }
+
         Server.PrintToChatAll(
             $"{Prefix} Enregistrement terminé : {ChatColors.Yellow}{added}{ChatColors.Default} nouvelles mesures " +
             $"({_heatmap.Samples.Count} au total pour ce spot). Replante au même endroit et recommence pour densifier.");
@@ -138,6 +257,14 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
         {
             case "prac":
                 CmdPrac(player);
+                break;
+            case "auto":
+                CmdAuto(player);
+                break;
+            case "stop":
+                if (_campaignRunning) FinishCampaign("arrêt manuel");
+                _autoMode = false;
+                Reply(player, $"{Prefix} Mode auto désactivé.");
                 break;
             case "c4":
                 CmdGiveC4(player);
@@ -165,7 +292,7 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
                 CmdLegend(player);
                 break;
             default:
-                Reply(player, $"{Prefix} Usage : {ChatColors.Yellow}!bombsim prac | c4 | show [armored] | record | spread | boom | clear | status | legend");
+                Reply(player, $"{Prefix} Usage : {ChatColors.Yellow}!bombsim prac | auto | stop | c4 | show [armored] | record | spread | boom | clear | status | legend");
                 Reply(player, $"{Prefix} Et {ChatColors.Yellow}!dmg{ChatColors.Default} (HUD dégâts) / {ChatColors.Yellow}!noclip{ChatColors.Default}.");
                 break;
         }
@@ -233,6 +360,27 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
 
         Reply(player, $"{Prefix} Mode practice activé : {Config.PracBotCount} bots CT passifs (respawn auto), rounds sans fin.");
         Reply(player, $"{Prefix} Pose la bombe puis {ChatColors.Yellow}css_bombsim record{ChatColors.Default} → {ChatColors.Yellow}spread{ChatColors.Default} → {ChatColors.Yellow}boom{ChatColors.Default}. Re-bombe : {ChatColors.Yellow}css_bombsim c4{ChatColors.Default}, vol : {ChatColors.Yellow}css_noclip{ChatColors.Default}.");
+    }
+
+    private void CmdAuto(CCSPlayerController? player)
+    {
+        _autoMode = !_autoMode;
+
+        if (!_autoMode)
+        {
+            if (_campaignRunning) FinishCampaign("arrêt manuel");
+            Reply(player, $"{Prefix} Mode auto {ChatColors.Red}désactivé{ChatColors.Default}.");
+            return;
+        }
+
+        Reply(player, $"{Prefix} Mode auto {ChatColors.Green}activé{ChatColors.Default} : pose la bombe et laisse faire (mesure automatique du plus proche au plus loin, {Config.AutoMaxWaves} vagues max).");
+
+        // Bombe déjà posée : on démarre immédiatement.
+        if (!_campaignRunning && _plantPos != null && _heatmap != null
+            && Utilities.FindAllEntitiesByDesignerName<CPlantedC4>("planted_c4").Any(c => c.IsValid))
+        {
+            StartCampaign();
+        }
     }
 
     private void CmdGiveC4(CCSPlayerController? player)
