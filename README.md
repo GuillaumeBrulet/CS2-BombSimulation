@@ -23,6 +23,9 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 
 | Commande | Effet |
 |---|---|
+| `!bombsim prac` | Config practice complète : sv_cheats, rounds sans fin, bots CT passifs avec respawn, argent illimité, C4 en main |
+| `!bombsim c4` | Redonne un C4 (et passe côté T si besoin) |
+| `!noclip` | Active/désactive le vol libre |
 | `!bombsim record` | Arme l'enregistrement (bombe posée requise) : boost les HP des bots, capture les dégâts à l'explosion, sauvegarde et affiche la heatmap |
 | `!bombsim spread` | Téléporte les bots vivants sur les cases non encore mesurées autour du plant |
 | `!bombsim boom` | Fait détoner la bombe posée dans 1 seconde (pas besoin d'attendre les 40 s) |
@@ -35,15 +38,18 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 ## Workflow type (serveur practice)
 
 ```
-// exec practice.cfg (sv_cheats 1, mp_ignore_round_win_conditions 1, bots autorisés)
-bot_add ct        // × autant que possible, 10-20 bots accélèrent beaucoup
+!bombsim prac     // config practice + bots passifs + C4 en main, tout-en-un
 // pose la bombe sur le spot à étudier
 !bombsim record
 !bombsim spread
 !bombsim boom
-// la heatmap s'affiche ; replante au même endroit, re-record/spread/boom pour densifier
+// la heatmap s'affiche ; !bombsim c4 pour replanter au même endroit et densifier
 !dmg              // puis balade-toi pour lire les valeurs exactes
 ```
+
+> 💡 Tant que la signature `Host_Say` du gamedata n'est pas corrigée (casse du patch
+> du 08/07/2026), les commandes chat `!`/`.` sont muettes : utiliser les équivalents
+> console (`css_bombsim prac`, `css_dmg`, `css_noclip`, …).
 
 ## Récupérer le plugin
 

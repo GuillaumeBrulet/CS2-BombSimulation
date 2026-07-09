@@ -42,6 +42,10 @@ public class PluginConfig : BasePluginConfig
     [JsonPropertyName("PlantKeyRounding")]
     public float PlantKeyRounding { get; set; } = 32f;
 
+    /// <summary>Nombre de bots ajoutés par !bombsim prac.</summary>
+    [JsonPropertyName("PracBotCount")]
+    public int PracBotCount { get; set; } = 12;
+
     /// <summary>Classe schema où lire les dégâts prédits par le jeu (aperçu natif du patch
     /// du 08/07/2026). Laisser le champ vide tant que le nom exact n'est pas identifié.</summary>
     [JsonPropertyName("PredictedDamageSchemaClass")]

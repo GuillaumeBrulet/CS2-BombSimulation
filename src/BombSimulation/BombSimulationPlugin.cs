@@ -136,6 +136,12 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
 
         switch (sub)
         {
+            case "prac":
+                CmdPrac(player);
+                break;
+            case "c4":
+                CmdGiveC4(player);
+                break;
             case "show":
                 CmdShow(player, armored: command.ArgCount > 2 && command.GetArg(2).StartsWith("arm"));
                 break;
@@ -159,8 +165,8 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
                 CmdLegend(player);
                 break;
             default:
-                Reply(player, $"{Prefix} Usage : {ChatColors.Yellow}!bombsim show [armored] | record | spread | boom | clear | status | legend");
-                Reply(player, $"{Prefix} Et {ChatColors.Yellow}!dmg{ChatColors.Default} pour afficher en continu les dégâts à ta position.");
+                Reply(player, $"{Prefix} Usage : {ChatColors.Yellow}!bombsim prac | c4 | show [armored] | record | spread | boom | clear | status | legend");
+                Reply(player, $"{Prefix} Et {ChatColors.Yellow}!dmg{ChatColors.Default} (HUD dégâts) / {ChatColors.Yellow}!noclip{ChatColors.Default}.");
                 break;
         }
     }
@@ -181,6 +187,83 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
             _hudCache.Remove(player.Slot);
             Reply(player, $"{Prefix} HUD dégâts {ChatColors.Red}désactivé{ChatColors.Default}.");
         }
+    }
+
+    /// <summary>Config practice complète en une commande : cheats, rounds sans fin,
+    /// bots passifs qui respawnent, argent illimité, et le C4 dans la main du joueur.</summary>
+    private void CmdPrac(CCSPlayerController? player)
+    {
+        var settings = new[]
+        {
+            "sv_cheats 1",
+            "mp_ignore_round_win_conditions 1",
+            "mp_warmup_end",
+            "mp_freezetime 0",
+            "mp_roundtime 60",
+            "mp_roundtime_defuse 60",
+            "mp_maxmoney 60000",
+            "mp_startmoney 60000",
+            "mp_buytime 9999",
+            "mp_buy_anywhere 1",
+            "mp_autoteambalance 0",
+            "mp_limitteams 0",
+            "mp_respawn_on_death_ct 1",
+            "mp_respawn_on_death_t 1",
+            "sv_infinite_ammo 1",
+            "bot_kick",
+            "bot_join_after_player 0",
+            "bot_stop 1",
+            "mp_restartgame 1",
+        };
+
+        foreach (var cmd in settings)
+            Server.ExecuteCommand(cmd);
+
+        // Les bots arrivent après le restart, puis restent immobiles (bot_stop).
+        AddTimer(2.0f, () =>
+        {
+            for (var i = 0; i < Config.PracBotCount; i++)
+                Server.ExecuteCommand("bot_add ct");
+
+            Server.ExecuteCommand("bot_stop 1");
+        });
+
+        if (player != null && player.IsValid)
+            AddTimer(3.5f, () => GiveC4(player));
+
+        Reply(player, $"{Prefix} Mode practice activé : {Config.PracBotCount} bots CT passifs (respawn auto), rounds sans fin.");
+        Reply(player, $"{Prefix} Pose la bombe puis {ChatColors.Yellow}css_bombsim record{ChatColors.Default} → {ChatColors.Yellow}spread{ChatColors.Default} → {ChatColors.Yellow}boom{ChatColors.Default}. Re-bombe : {ChatColors.Yellow}css_bombsim c4{ChatColors.Default}, vol : {ChatColors.Yellow}css_noclip{ChatColors.Default}.");
+    }
+
+    private void CmdGiveC4(CCSPlayerController? player)
+    {
+        if (player == null || !player.IsValid || !player.PawnIsAlive)
+        {
+            Reply(player, $"{Prefix} Commande joueur uniquement (vivant).");
+            return;
+        }
+
+        GiveC4(player);
+        Reply(player, $"{Prefix} C4 donné.");
+    }
+
+    private static void GiveC4(CCSPlayerController player)
+    {
+        if (!player.IsValid || !player.PawnIsAlive) return;
+
+        if (player.Team != CsTeam.Terrorist)
+            player.SwitchTeam(CsTeam.Terrorist);
+
+        player.GiveNamedItem("weapon_c4");
+    }
+
+    [ConsoleCommand("css_noclip", "Active/désactive le noclip (sv_cheats requis)")]
+    [CommandHelper(minArgs: 0, whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnNoclipCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (player == null || !player.IsValid || !player.PawnIsAlive) return;
+
+        player.ExecuteClientCommandFromServer("noclip");
     }
 
     private void CmdShow(CCSPlayerController? player, bool armored)
