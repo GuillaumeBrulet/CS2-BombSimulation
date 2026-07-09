@@ -29,10 +29,17 @@ public class PluginConfig : BasePluginConfig
     [JsonPropertyName("RecorderBotsArmored")]
     public bool RecorderBotsArmored { get; set; } = false;
 
-    /// <summary>Durée (s) pendant laquelle on capte les player_hurt après bomb_exploded —
-    /// l'onde de choc met du temps à atteindre les joueurs éloignés.</summary>
+    /// <summary>Durée maximale (s) de capture des player_hurt après bomb_exploded —
+    /// l'onde de choc met du temps à atteindre les joueurs éloignés. La fenêtre se
+    /// ferme plus tôt dès que l'onde a fini de frapper (voir RecordQuietSeconds).</summary>
     [JsonPropertyName("RecordWindowSeconds")]
     public float RecordWindowSeconds { get; set; } = 6f;
+
+    /// <summary>Fermeture anticipée de la fenêtre de capture : si aucun player_hurt
+    /// de la bombe n'arrive pendant ce délai (s), l'onde est considérée dissipée
+    /// et la vague se termine sans attendre RecordWindowSeconds.</summary>
+    [JsonPropertyName("RecordQuietSeconds")]
+    public float RecordQuietSeconds { get; set; } = 1.0f;
 
     /// <summary>Rayon (unités) autour du plant dans lequel !bombsim spread répartit les bots.</summary>
     [JsonPropertyName("SpreadRadius")]
@@ -46,18 +53,26 @@ public class PluginConfig : BasePluginConfig
     [JsonPropertyName("PracBotCount")]
     public int PracBotCount { get; set; } = 12;
 
-    /// <summary>Nombre maximum de vagues d'explosion en mode auto.</summary>
+    /// <summary>Nombre de bots visé pendant une campagne auto (ajoutés au lancement
+    /// si besoin). Plus il y a de bots, moins il faut de rounds pour couvrir la zone :
+    /// 1 bot = 1 mesure par round.</summary>
+    [JsonPropertyName("AutoBotCount")]
+    public int AutoBotCount { get; set; } = 40;
+
+    /// <summary>Garde-fou : nombre maximum de rounds (vagues) en mode auto. La
+    /// campagne s'arrête d'elle-même bien avant, quand toutes les cases sont
+    /// mesurées ou hors de portée de l'onde.</summary>
     [JsonPropertyName("AutoMaxWaves")]
-    public int AutoMaxWaves { get; set; } = 15;
+    public int AutoMaxWaves { get; set; } = 40;
 
     /// <summary>Délai (s) entre le placement des bots et la détonation.</summary>
     [JsonPropertyName("AutoSpreadSettleSeconds")]
-    public float AutoSpreadSettleSeconds { get; set; } = 2.0f;
+    public float AutoSpreadSettleSeconds { get; set; } = 0.5f;
 
-    /// <summary>Délai (s) après la fenêtre de capture avant la vague suivante
-    /// (laisse le temps aux bots de respawn).</summary>
+    /// <summary>Délai (s) après le restart de round de la campagne avant de
+    /// replanter la bombe et lancer la vague suivante (laisse le temps aux spawns).</summary>
     [JsonPropertyName("AutoRespawnDelaySeconds")]
-    public float AutoRespawnDelaySeconds { get; set; } = 4.0f;
+    public float AutoRespawnDelaySeconds { get; set; } = 1.5f;
 
     /// <summary>Classe schema où lire les dégâts prédits par le jeu (aperçu natif du patch
     /// du 08/07/2026). Laisser le champ vide tant que le nom exact n'est pas identifié.</summary>

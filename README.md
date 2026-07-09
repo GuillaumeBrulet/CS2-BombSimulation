@@ -14,7 +14,7 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 
 ## Fonctionnement
 
-1. **Mesure empirique** — on pose la bombe, on répartit des bots sur une grille autour du plant, on laisse exploser. Chaque `player_hurt` infligé par la `planted_c4` devient une mesure : position de la victime au moment où l'onde l'atteint + dégâts bruts (les bots reçoivent des milliers de HP pour que la valeur ne soit pas plafonnée). On replante au même endroit et on répète pour densifier.
+1. **Mesure empirique** — on pose la bombe, on répartit des bots sur une grille autour du plant, on laisse exploser. Chaque `player_hurt` infligé par la `planted_c4` devient une mesure : position de la victime au moment où l'onde l'atteint + dégâts bruts (les bots reçoivent des milliers de HP pour que la valeur ne soit pas plafonnée). Les bots placés mais épargnés par l'onde donnent une mesure explicite **« 0 dégât »** : la case est marquée safe et n'est plus jamais re-testée. On replante au même endroit et on répète pour densifier.
 2. **Affichage au sol** — un vrai décal peint sur les textures n'est pas possible depuis un plugin serveur ; on affiche une grille de croix colorées (entités `beam`) plaquées au sol : vert → jaune → orange → rouge → **violet = mortel (100+)**.
 3. **HUD live** (`!dmg`) — affiche en continu, au centre de l'écran, les dégâts estimés à ta position (interpolation des mesures voisines).
 4. **Lecture prédictive** *(préparé, à activer)* — le jeu calcule désormais lui-même un aperçu des dégâts par joueur (la barre de vie clignote quand la bombe est posée). Si ce champ est exposé côté serveur, le renseigner dans la config (`PredictedDamageSchemaField`) permet de lire la valeur exacte en continu, et d'échantillonner une zone en téléportant un bot sonde — sans faire exploser quoi que ce soit. Le nom du champ reste à identifier en dumpant le schema d'un serveur à jour.
@@ -24,7 +24,7 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 | Commande | Effet |
 |---|---|
 | `!bombsim prac` | Config practice complète : sv_cheats, rounds sans fin, bots CT passifs avec respawn, argent illimité, C4 en main |
-| `!bombsim auto` | **Mode auto** : pose la bombe et le plugin fait tout — vagues d'explosions enchaînées (spread → boom → respawn → replant automatique de la bombe au même endroit) jusqu'à couvrir toute la zone, puis affiche la heatmap |
+| `!bombsim auto` | **Mode auto** : pose la bombe et le plugin fait tout — une explosion **par round** (la bombe ne peut détoner qu'une fois par round), puis restart automatique du round et replant au même endroit, jusqu'à couvrir toute la zone ; la heatmap complète s'affiche à la fin. Optimisé pour la vitesse : 40 bots ajoutés automatiquement, fenêtre de capture adaptative, ~5-6 s par round → une zone complète en **2-3 minutes** |
 | `!bombsim stop` | Arrête la campagne auto en cours |
 | `!bombsim c4` | Redonne un C4 (et passe côté T si besoin) |
 | `!noclip` | Active/désactive le vol libre |
@@ -43,8 +43,9 @@ Conséquence : impossible de calculer les dégâts avec une formule de distance 
 !bombsim prac     // config practice + bots passifs + C4 en main, tout-en-un
 !bombsim auto     // active le mode automatique
 // pose la bombe sur le spot à étudier… et c'est tout :
-// le plugin enchaîne les vagues (spread → boom → respawn → replant auto)
-// du plus proche au plus loin, puis affiche la heatmap complète
+// le plugin enchaîne les rounds (spread → boom → restart du round →
+// replant auto au même endroit), une explosion par round, du plus
+// proche au plus loin, puis affiche la heatmap complète
 !dmg              // balade-toi pour lire les valeurs exactes
 ```
 
@@ -91,6 +92,8 @@ La config est générée au premier lancement dans `addons/counterstrikesharp/co
 - [x] Phase 2 — heatmap au sol (beams), HUD live `!dmg`, détonation rapide, répartition des bots
 - [x] Phase 3 — cache JSON par `(map, spot de plant)`
 - [x] Mode auto : campagne de vagues enchaînées avec replant automatique de la bombe
+- [x] Mode auto v2 : une explosion par round (contrainte moteur : la bombe ne détone qu'une fois par round) — restart + replant automatiques entre les vagues, les mesures s'accumulent car le cache `(map, spot)` survit aux rounds
+- [x] Campagne rapide (~15 min → ~2-3 min) : 40 bots auto-ajoutés, fenêtre de capture adaptative (clôture dès que l'onde a fini de frapper), délais compressés, mesures « 0 dégât » pour les cases hors de portée (convergence garantie + zones safe visibles en vert et lisibles par `!dmg`)
 - [x] ~~Identifier le champ schema de l'aperçu de dégâts~~ → **conclu : il n'existe pas côté serveur.** L'aperçu (barre de vie qui clignote) est calculé côté client à partir des données précalculées de la map ; aucun champ réseau, aucun user message dédié (vérifié par diff du schema complet avant/après patch, build 14168)
 - [ ] Appeler la fonction serveur de lookup des dégâts précalculés via signature mémoire (dès que la communauté publie les patterns du nouveau libserver.so) → heatmap instantanée sans explosion
 - [ ] Parser les données de dégâts baked directement depuis la map compilée (~171k valeurs/map)

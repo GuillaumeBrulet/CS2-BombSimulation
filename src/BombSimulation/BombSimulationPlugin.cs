@@ -5,14 +5,16 @@ using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Commands;
+using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
+using CsTimer = CounterStrikeSharp.API.Modules.Timers.Timer;
 
 namespace BombSimulation;
 
 public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
 {
     public override string ModuleName => "CS2 Bomb Simulation";
-    public override string ModuleVersion => "0.2.0";
+    public override string ModuleVersion => "0.3.0";
     public override string ModuleAuthor => "GuillaumeBrulet";
 
     public override string ModuleDescription =>
@@ -29,10 +31,24 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     private HeatmapData? _heatmap;
     private int _plantSite;
 
-    // Mode auto : campagne de vagues d'explosions enchaînées sans intervention.
+    // Mode auto : campagne de vagues d'explosions sans intervention.
+    // La bombe ne peut détoner qu'une fois par round : chaque vague a son
+    // propre round (explosion → restart → replant automatique).
     private bool _autoMode;
     private bool _campaignRunning;
     private int _wavesLeft;
+    private bool _awaitingRestart;
+    private int _waveSpawnRetries;
+    private int _campaignHurtTotal;
+
+    // Cases (i, j) déjà tentées sans résultat (bot tombé, coincé…) : après
+    // 2 essais on les abandonne pour que la campagne converge.
+    private readonly Dictionary<(int I, int J), int> _cellAttempts = new();
+
+    // Fenêtre de capture adaptative : on la ferme dès que l'onde a fini de
+    // frapper (RecordQuietSeconds sans player_hurt) au lieu d'attendre le max.
+    private CsTimer? _recordPollTimer;
+    private float _explodeTime;
 
     private readonly HashSet<int> _hudSlots = new();
     private readonly Dictionary<int, string> _hudCache = new();
@@ -62,6 +78,11 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
         _recorder?.Disarm();
         _hudSlots.Clear();
         _hudCache.Clear();
+
+        _campaignRunning = false;
+        _awaitingRestart = false;
+        _cellAttempts.Clear();
+        StopRecordPoll();
     }
 
     // ---------------------------------------------------------------- events
@@ -103,16 +124,52 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     {
         if (_plantPos == null || _heatmap == null) return;
 
+        // L'explosion ne doit pas terminer le round (on gère nous-mêmes le
+        // restart entre les vagues), et le round suivant doit démarrer sans freeze.
+        Server.ExecuteCommand("mp_ignore_round_win_conditions 1");
+        Server.ExecuteCommand("mp_freezetime 0");
+
         _campaignRunning = true;
+        _awaitingRestart = false;
+        _waveSpawnRetries = 0;
+        _campaignHurtTotal = 0;
+        _cellAttempts.Clear();
         _wavesLeft = Config.AutoMaxWaves;
-        Server.PrintToChatAll($"{Prefix} {ChatColors.Green}Campagne auto lancée{ChatColors.Default} : jusqu'à {Config.AutoMaxWaves} vagues d'explosion, du plus proche au plus loin. Ne touche à rien !");
-        RunWave();
+
+        // 1 bot = 1 mesure par round : on complète l'effectif avant de commencer.
+        var missing = Config.AutoBotCount - Utilities.GetPlayers().Count(p => p.IsValid && p.IsBot);
+        for (var i = 0; i < missing; i++)
+            Server.ExecuteCommand("bot_add ct");
+        if (missing > 0)
+            Server.ExecuteCommand("bot_stop 1");
+
+        Server.PrintToChatAll($"{Prefix} {ChatColors.Green}Campagne auto lancée{ChatColors.Default} : {Config.AutoBotCount} bots, une explosion par round, du plus proche au plus loin. Ne touche à rien !");
+
+        if (missing > 0)
+            AddTimer(2.0f, RunWave);
+        else
+            RunWave();
     }
 
     private void RunWave()
     {
         if (!_campaignRunning || _plantPos == null || _heatmap == null) return;
 
+        // Après un restart de round, les bots peuvent mettre un moment à spawn :
+        // on distingue "pas encore de bots" (on réessaie) de "tout est mesuré".
+        if (!Utilities.GetPlayers().Any(p => p.IsValid && p.IsBot && p.PawnIsAlive))
+        {
+            if (_waveSpawnRetries++ < 3)
+            {
+                AddTimer(Config.AutoRespawnDelaySeconds, RunWave);
+                return;
+            }
+
+            FinishCampaign("aucun bot vivant — ajoute des bots (bot_add ct) et relance");
+            return;
+        }
+
+        _waveSpawnRetries = 0;
         _recorder?.Arm();
         var moved = SpreadBots(_plantPos, _heatmap);
 
@@ -131,22 +188,22 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     {
         if (!_campaignRunning || _plantPos == null) return;
 
-        var c4 = Utilities.FindAllEntitiesByDesignerName<CPlantedC4>("planted_c4").FirstOrDefault();
-        if (c4 == null || !c4.IsValid)
+        // Une seule détonation possible par round : si la bombe manque ici,
+        // on ne tente pas de replanter dans le même round (ça ne détonerait pas).
+        var c4 = Utilities.FindAllEntitiesByDesignerName<CPlantedC4>("planted_c4").FirstOrDefault(c => c.IsValid);
+        if (c4 == null)
         {
-            // Plus de bombe (vagues suivantes) : on en replante une nous-mêmes.
-            c4 = SpawnPlantedC4(_plantPos, _plantSite);
-            if (c4 == null)
-            {
-                FinishCampaign("impossible de replanter la bombe automatiquement — replante à la main et relance");
-                return;
-            }
+            FinishCampaign("la bombe a disparu avant la détonation — replante à la main et relance");
+            return;
         }
 
-        c4.C4Blow = Server.CurrentTime + 1f;
+        c4.C4Blow = Server.CurrentTime + 0.5f;
         Utilities.SetStateChanged(c4, "CPlantedC4", "m_flC4Blow");
     }
 
+    /// <summary>Replante une bombe au spot mesuré, en début de round frais
+    /// (première et unique détonation du round). Timer standard : c'est
+    /// DetonateForCampaign qui déclenche l'explosion.</summary>
     private CPlantedC4? SpawnPlantedC4(Vector pos, int site)
     {
         var c4 = Utilities.CreateEntityByName<CPlantedC4>("planted_c4");
@@ -156,12 +213,18 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
         c4.DispatchSpawn();
 
         c4.BombTicking = true;
-        c4.TimerLength = 2f;
-        c4.C4Blow = Server.CurrentTime + 2f;
+        c4.TimerLength = 40f;
+        c4.C4Blow = Server.CurrentTime + 40f;
         c4.BombSite = site;
         Utilities.SetStateChanged(c4, "CPlantedC4", "m_bBombTicking");
         Utilities.SetStateChanged(c4, "CPlantedC4", "m_flC4Blow");
         Utilities.SetStateChanged(c4, "CPlantedC4", "m_nBombSite");
+
+        // L'état "bombe posée" des gamerules doit refléter le plant : le nouveau
+        // système d'onde de choc (et la logique C4 en général) peut le consulter.
+        var gameRules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules")
+            .FirstOrDefault()?.GameRules;
+        if (gameRules != null) gameRules.BombPlanted = true;
 
         return c4;
     }
@@ -169,6 +232,8 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     private void FinishCampaign(string reason)
     {
         _campaignRunning = false;
+        _awaitingRestart = false;
+        StopRecordPoll();
 
         if (_heatmap != null)
         {
@@ -194,12 +259,40 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     {
         if (_recorder is { Armed: true })
         {
-            // L'onde de choc continue de se propager après l'explosion :
-            // on laisse la fenêtre de capture ouverte quelques secondes.
-            AddTimer(Config.RecordWindowSeconds, FinalizeRecording);
+            // L'onde de choc continue de se propager après l'explosion. Plutôt
+            // qu'attendre le maximum, on surveille les player_hurt : dès que
+            // l'onde a fini de frapper (RecordQuietSeconds de silence), on clôt.
+            _explodeTime = Server.CurrentTime;
+            _recordPollTimer?.Kill();
+            _recordPollTimer = AddTimer(0.25f, CheckRecordingDone, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
         }
 
         return HookResult.Continue;
+    }
+
+    private void CheckRecordingDone()
+    {
+        if (_recorder is not { Armed: true })
+        {
+            StopRecordPoll();
+            return;
+        }
+
+        var now = Server.CurrentTime;
+        var lastActivity = Math.Max(_explodeTime, _recorder.LastHurtTime);
+
+        if (now - lastActivity < Config.RecordQuietSeconds
+            && now - _explodeTime < Config.RecordWindowSeconds)
+            return;
+
+        StopRecordPoll();
+        FinalizeRecording();
+    }
+
+    private void StopRecordPoll()
+    {
+        _recordPollTimer?.Kill();
+        _recordPollTimer = null;
     }
 
     [GameEventHandler]
@@ -207,25 +300,72 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     {
         // Le restart de round détruit les beams : on oublie nos références.
         _renderer.Reset();
+
+        if (!_campaignRunning) return HookResult.Continue;
+
+        if (_awaitingRestart)
+        {
+            // Restart déclenché par la campagne : on laisse les spawns se faire,
+            // puis on replante au même endroit et on enchaîne la vague suivante.
+            _awaitingRestart = false;
+            AddTimer(Config.AutoRespawnDelaySeconds, ContinueCampaignAfterRestart);
+        }
+        else
+        {
+            // Round relancé en dehors de la campagne (commande manuelle, fin de
+            // round imprévue) : l'état n'est plus garanti, on s'arrête proprement.
+            FinishCampaign("round relancé en dehors de la campagne — vérifie mp_ignore_round_win_conditions puis relance");
+        }
+
         return HookResult.Continue;
+    }
+
+    private void ContinueCampaignAfterRestart()
+    {
+        if (!_campaignRunning || _plantPos == null) return;
+
+        var c4 = SpawnPlantedC4(_plantPos, _plantSite);
+        if (c4 == null)
+        {
+            FinishCampaign("impossible de replanter la bombe après le restart — replante à la main et relance");
+            return;
+        }
+
+        RunWave();
     }
 
     private void FinalizeRecording()
     {
         if (_recorder is not { Armed: true } || _heatmap == null || _store == null) return;
 
+        var hurt = _recorder.HurtSamplesThisRun;
+
+        // Les bots placés mais épargnés donnent une mesure "0 dégât" (case safe,
+        // plus jamais re-testée) — seulement si la détonation a réellement frappé
+        // quelqu'un, sinon des zéros seraient enregistrés à tort.
+        var detonationWorked = hurt > 0 || _campaignHurtTotal > 0;
+        if (detonationWorked)
+            _recorder.RecordZeroesForUnhurt(_heatmap);
+
         var added = _recorder.SamplesThisRun;
+        _campaignHurtTotal += hurt;
         _recorder.Disarm();
         _store.Save(_heatmap);
-        _renderer.Render(_heatmap, Config, Config.RecorderBotsArmored);
 
         if (_campaignRunning)
         {
             _wavesLeft--;
 
-            if (added == 0)
+            if (!detonationWorked)
             {
-                FinishCampaign("aucune mesure capturée sur la dernière vague — la détonation automatique ne fonctionne peut-être pas sur cette map");
+                FinishCampaign("aucun dégât capturé — la détonation automatique ne fonctionne peut-être pas sur cette map");
+                return;
+            }
+
+            if (hurt == 0)
+            {
+                // Plus une seule case à portée de l'onde : la zone est couverte.
+                FinishCampaign("l'onde n'atteint plus aucune case non mesurée — zone couverte");
                 return;
             }
 
@@ -235,10 +375,15 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
                 return;
             }
 
-            Server.PrintToChatAll($"{Prefix} +{added} mesures ({_heatmap.Samples.Count} au total). Vague suivante dans {Config.AutoRespawnDelaySeconds:0}s…");
-            AddTimer(Config.AutoRespawnDelaySeconds, RunWave);
+            // La bombe ne peut détoner qu'une fois par round : on relance un round
+            // pour la vague suivante (le restart est intercepté dans OnRoundStart).
+            Server.PrintToChatAll($"{Prefix} +{added} mesures ({_heatmap.Samples.Count} au total). Round suivant…");
+            _awaitingRestart = true;
+            Server.ExecuteCommand("mp_restartgame 1");
             return;
         }
+
+        _renderer.Render(_heatmap, Config, Config.RecorderBotsArmored);
 
         Server.PrintToChatAll(
             $"{Prefix} Enregistrement terminé : {ChatColors.Yellow}{added}{ChatColors.Default} nouvelles mesures " +
@@ -546,14 +691,15 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
     // ------------------------------------------------------------------ bots
 
     /// <summary>Téléporte les bots vivants sur les cellules de grille encore non
-    /// mesurées, en spirale autour du plant (même étage que le plant).</summary>
+    /// mesurées, en spirale autour du plant (même étage que le plant). Chaque
+    /// placement est déclaré au recorder : un bot épargné par l'onde produira
+    /// une mesure "0 dégât" qui marque sa case comme safe.</summary>
     private int SpreadBots(Vector plantPos, HeatmapData heatmap)
     {
         var bots = Utilities.GetPlayers()
             .Where(p => p.IsValid && p.IsBot && p.PawnIsAlive)
-            .Select(p => p.PlayerPawn.Value)
-            .Where(pawn => pawn != null)
-            .Cast<CCSPlayerPawn>()
+            .Select(p => (p.Slot, Pawn: p.PlayerPawn.Value))
+            .Where(t => t.Pawn != null)
             .ToList();
 
         if (bots.Count == 0) return 0;
@@ -576,7 +722,18 @@ public class BombSimulationPlugin : BasePlugin, IPluginConfig<PluginConfig>
                     var y = plantPos.Y + j * spacing;
                     if (heatmap.HasSampleNear(x, y, plantPos.Z, spacing * 0.6f)) continue;
 
-                    bots[moved].Teleport(new Vector(x, y, plantPos.Z + 16f), new QAngle(), new Vector());
+                    // Case déjà tentée 2 fois sans jamais produire de mesure
+                    // (bot tombé, coincé dans un mur…) : on l'abandonne.
+                    if (_campaignRunning)
+                    {
+                        _cellAttempts.TryGetValue((i, j), out var attempts);
+                        if (attempts >= 2) continue;
+                        _cellAttempts[(i, j)] = attempts + 1;
+                    }
+
+                    var (slot, pawn) = bots[moved];
+                    pawn!.Teleport(new Vector(x, y, plantPos.Z + 16f), new QAngle(), new Vector());
+                    _recorder?.RegisterPlacement(slot, x, y, plantPos.Z);
                     moved++;
                 }
             }
