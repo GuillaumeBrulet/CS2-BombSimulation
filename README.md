@@ -91,8 +91,9 @@ La config est générée au premier lancement dans `addons/counterstrikesharp/co
 - [x] Phase 2 — heatmap au sol (beams), HUD live `!dmg`, détonation rapide, répartition des bots
 - [x] Phase 3 — cache JSON par `(map, spot de plant)`
 - [x] Mode auto : campagne de vagues enchaînées avec replant automatique de la bombe
-- [ ] Identifier le champ schema de l'aperçu de dégâts (patch 08/07/2026) et activer la lecture prédictive
-- [ ] Échantillonnage automatique par bot sonde téléporté (si champ prédictif dispo)
+- [x] ~~Identifier le champ schema de l'aperçu de dégâts~~ → **conclu : il n'existe pas côté serveur.** L'aperçu (barre de vie qui clignote) est calculé côté client à partir des données précalculées de la map ; aucun champ réseau, aucun user message dédié (vérifié par diff du schema complet avant/après patch, build 14168)
+- [ ] Appeler la fonction serveur de lookup des dégâts précalculés via signature mémoire (dès que la communauté publie les patterns du nouveau libserver.so) → heatmap instantanée sans explosion
+- [ ] Parser les données de dégâts baked directement depuis la map compilée (~171k valeurs/map)
 - [ ] Comparaison côte à côte de deux spots de plant
 
 > ⚠️ Ce plugin n'a pas encore été validé en jeu contre le nouveau système d'onde de choc : les noms d'événements/propriétés utilisés sont ceux connus de CounterStrikeSharp 1.0.370. Toute divergence constatée sur un serveur à jour est à remonter en issue.
