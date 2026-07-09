@@ -45,18 +45,33 @@ bot_add ct        // × autant que possible, 10-20 bots accélèrent beaucoup
 !dmg              // puis balade-toi pour lire les valeurs exactes
 ```
 
-## Installation
+## Récupérer le plugin
 
-Prérequis serveur : [Metamod:Source](https://www.sourcemm.net/) + [CounterStrikeSharp](https://docs.cssharp.dev/docs/guides/getting-started.html).
+### Option A — GitHub Actions (aucun outil requis)
 
-```bash
-dotnet build src/BombSimulation -c Release
+Chaque push déclenche le workflow **Build** : dans l'onglet *Actions* du dépôt, ouvrir le dernier run et télécharger l'artifact `BombSimulation` (le dossier prêt à déposer sur le serveur). Un tag `v*` (ex. `v0.1.0`) publie en plus une release avec le zip attaché.
+
+### Option B — build local
+
+1. Installer le [SDK .NET 10](https://dotnet.microsoft.com/download/dotnet/10.0) :
+   - **Windows** : `winget install Microsoft.DotNet.SDK.10`
+   - **Linux (Ubuntu/Debian)** : `sudo apt-get install -y dotnet-sdk-10.0`
+2. À la racine du dépôt :
+
+   ```bash
+   dotnet publish src/BombSimulation -c Release -o out/BombSimulation
+   ```
+
+Le dossier `out/BombSimulation/` contient uniquement le plugin (la référence CounterStrikeSharp est exclue du build : le serveur fournit déjà ces DLL — ne jamais les copier avec le plugin).
+
+## Installation sur le serveur
+
+Prérequis : [Metamod:Source](https://www.sourcemm.net/) + [CounterStrikeSharp](https://docs.cssharp.dev/docs/guides/getting-started.html).
+
+Copier le dossier obtenu (artifact ou `out/BombSimulation/`) dans :
+
 ```
-
-Copier `src/BombSimulation/bin/Release/net10.0/BombSimulation.dll` dans :
-
-```
-game/csgo/addons/counterstrikesharp/plugins/BombSimulation/BombSimulation.dll
+game/csgo/addons/counterstrikesharp/plugins/BombSimulation/
 ```
 
 La config est générée au premier lancement dans `addons/counterstrikesharp/configs/plugins/BombSimulation/BombSimulation.json` (espacement de grille, HP des bots, mesures avec armure, champ schema prédictif…). Les heatmaps sont sauvegardées en JSON dans le dossier `data/` du plugin.

@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish
+        run: dotnet publish src/BombSimulation -c Release -o out/BombSimulation
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BombSimulation
+          path: out/BombSimulation
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: BombSimulation
+          path: BombSimulation
+
+      - name: Zip plugin
+        run: zip -r "BombSimulation-${GITHUB_REF_NAME}.zip" BombSimulation
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: BombSimulation-*.zip
+          generate_release_notes: true
